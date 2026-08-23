@@ -101,7 +101,9 @@ node scripts/console-ctl.mjs restart
 4. 之后正常使用 Raft，控制台实时显示模型、推理深度、思考状态和 token 统计；
 5. 停止：控制台“本地服务”区点“停止”Raft/DSH；需要断开 agent 时先停止 Raft，再点“断开 DSH”，最后 `node scripts/console-ctl.mjs stop`。
 
-说明：Raft/DSH 的启停命令放在本机 `~/.raft-dsh-console/service-commands.json`（仓库不包含机器专用 bat）。格式为 `{"dsh":{"start":{"command":"...","cwd":"可选"}},"raft":{...}}`。仓库只提供桥本身、控制台，以及修改/恢复 `models-store.json` 的脚本。
+说明：Raft/DSH 的启停命令放在本机 `~/.raft-dsh-console/service-commands.json`（仓库不包含机器专用 bat）。可直接引用桌面 bat：`{"dsh":{"start":{"bat":"C:\Users\<you>\Desktop\启动 DeepSeek Harness.bat"}},"raft":{"stop":{"bat":"...","args":["--no-pause"]}}}`。
+
+默认启用**全部自动接入**：控制台检测到 Raft 退出后，会自动把扫描到的所有 builtin agent 接入 DSH（最长 8 秒）。手动断开某个 agent 会关闭该 agent 的自动接入；再次点“接入 DSH”恢复自动接入。
 
 桥在复制 `raft.ps1` 时会自动注入 `[Console]::InputEncoding = $utf8NoBom`，避免中文消息经 PowerShell 5.1 的 stdin 管道被按系统 ANSI/GBK 解码成乱码。
 

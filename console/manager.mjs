@@ -218,6 +218,7 @@ function isRaftRunning() {
 let config = readJson(CONFIG_FILE, { version: 1, globalModels: {}, agents: {} })
 if (!config.globalModels) config.globalModels = {}
 if (!config.agents) config.agents = {}
+if (typeof config.autoConnectAll !== 'boolean') config.autoConnectAll = true
 function saveConfig() {
   writeJson(CONFIG_FILE, config)
 }
@@ -256,7 +257,11 @@ function modelsOfAgent(agent) {
 
 function agentConfig(agentId) {
   if (!config.agents[agentId]) {
-    config.agents[agentId] = { enabled: false, port: 0, models: {}, connected: false, pid: null }
+    config.agents[agentId] = { enabled: false, port: 0, models: {}, connected: false, pid: null, autoConnect: true }
+    saveConfig()
+  }
+  if (typeof config.agents[agentId].autoConnect !== 'boolean') {
+    config.agents[agentId].autoConnect = true
     saveConfig()
   }
   return config.agents[agentId]
@@ -753,11 +758,18 @@ function liveTurnFor(sessionId) {
 }
 
 function normalizeServiceCommand(value) {
-  if (typeof value === 'string' && value.trim()) return { command: value, cwd: undefined }
-  if (value && typeof value === 'object' && typeof value.command === 'string' && value.command.trim()) {
-    return { command: value.command, cwd: typeof value.cwd === 'string' && value.cwd.trim() ? value.cwd : undefined }
+  if (typeof value === 'string' && value.trim()) return { command: value }
+  if (value && typeof value === 'object') {
+    const cwd = typeof value.cwd === 'string' && value.cwd.trim() ? value.cwd : undefined
+    if (typeof value.bat === 'string' && value.bat.trim()) {
+      return { bat: value.bat, args: Array.isArray(value.args) ? value.args.map(String) : [], cwd }
+    }
+    if (typeof value.exe === 'string' && value.exe.trim()) {
+      return { exe: value.exe, args: Array.isArray(value.args) ? value.args.map(String) : [], cwd }
+    }
+    if (typeof value.command === 'string' && value.command.trim()) return { command: value.command, cwd }
   }
-  return { command: '', cwd: undefined }
+  return {}
 }
 
 function serviceCommands() {
@@ -776,18 +788,24 @@ function serviceCommands() {
 
 function runServiceAction(service, action) {
   const entry = serviceCommands()[service]?.[action]
-  if (!entry?.command) return { ok: false, error: `${service} ${action} 命令未配置：编辑 ${SERVICE_COMMANDS_FILE} 或设置环境变量` }
+  if (!entry || (!entry.bat && !entry.exe && !entry.command)) {
+    return { ok: false, error: `${service} ${action} 命令未配置：编辑 ${SERVICE_COMMANDS_FILE} 或设置环境变量` }
+  }
   const comspec = process.env.ComSpec ?? 'cmd.exe'
   const options = entry.cwd ? { cwd: entry.cwd } : {}
+  let file = entry.exe ?? comspec
+  let args = entry.exe ? [...(entry.args ?? [])] : ['/d', '/s', '/c']
+  if (entry.bat) args.push('call', entry.bat, ...(entry.args ?? []))
+  else if (!entry.exe) args.push(entry.command)
   try {
     if (action === 'start') {
-      const child = spawn(comspec, ['/d', '/s', '/c', entry.command], {
+      const child = spawn(file, args, {
         detached: true, stdio: 'ignore', windowsHide: true, ...options,
       })
       child.unref()
       return { ok: true, service, action, started: true }
     }
-    execFileSync(comspec, ['/d', '/s', '/c', entry.command], {
+    execFileSync(file, args, {
       stdio: 'ignore', timeout: 120_000, windowsHide: true, ...options,
     })
     return { ok: true, service, action }
@@ -871,6 +889,7 @@ async function buildState() {
       port,
       enabled: agentCfg.enabled ?? false,
       connected,
+      autoConnect: agentCfg.autoConnect !== false,
       pid: agentCfg.pid ?? null,
       backupExists: existsSync(backupPath(agent)),
       currentRuntime: info.runtime ?? null,
@@ -889,22 +908,87 @@ async function buildState() {
   const commands = serviceCommands()
   return {
     console: { port: PORT, dataDir: DATA_DIR },
+    autoConnectAll: config.autoConnectAll === true,
     dsh: { base: DSH_BASE, ok: dsh.ok, status: dsh.status },
     raft: { running: raftRunning },
     services: {
       dsh: {
         ok: dsh.ok,
         status: dsh.status,
-        startConfigured: Boolean(commands.dsh.start?.command),
-        stopConfigured: Boolean(commands.dsh.stop?.command),
+        startConfigured: Boolean(commands.dsh.start?.bat || commands.dsh.start?.exe || commands.dsh.start?.command),
+        stopConfigured: Boolean(commands.dsh.stop?.bat || commands.dsh.stop?.exe || commands.dsh.stop?.command),
       },
       raft: {
         running: raftRunning,
-        startConfigured: Boolean(commands.raft.start?.command),
-        stopConfigured: Boolean(commands.raft.stop?.command),
+        startConfigured: Boolean(commands.raft.start?.bat || commands.raft.start?.exe || commands.raft.start?.command),
+        stopConfigured: Boolean(commands.raft.stop?.bat || commands.raft.stop?.exe || commands.raft.stop?.command),
       },
     },
     agents,
+  }
+}
+
+async function connectAgent(agent) {
+  if (!agent?.builtin) return { ok: false, error: 'agent does not have a builtin runtime' }
+  const runtimeMap = runtimeFromRunnerLogs()
+  if (Object.keys(runtimeMap).length > 0 && runtimeMap[agent.id] && runtimeMap[agent.id].runtime !== 'builtin') {
+    return { ok: false, error: `当前 runtime 是 ${runtimeMap[agent.id].runtime}，桥只对 builtin runtime 生效` }
+  }
+  if (isRaftRunning()) return { ok: false, error: '请先退出 Raft，再接入或切换 agent' }
+  const agentCfg = agentConfig(agent.id)
+  agentCfg.autoConnect = true
+  let port = 0
+  if (agentCfg.port && agentCfg.port > 0) {
+    const existing = await bridgeIdentity(agentCfg.port)
+    if (!existing || existing.raftAgentId === agent.id) port = agentCfg.port
+    if (existing && existing.raftAgentId === agent.id && agentCfg.connected === true) {
+      return { ok: true, already: true, port, preset: agentCfg.preset ?? 'anchored-standard' }
+    }
+  }
+  if (!port) {
+    const used = new Set(Object.values(config.agents).map((item) => item.port).filter(Boolean))
+    for (let candidate = BRIDGE_PORT_BASE; candidate < BRIDGE_PORT_BASE + 50; candidate++) {
+      if (used.has(candidate)) continue
+      const existing = await bridgeIdentity(candidate)
+      if (!existing) { port = candidate; break }
+    }
+  }
+  if (!port) return { ok: false, error: 'no free bridge port' }
+  const policies = Object.fromEntries(
+    modelsOfAgent(agent).map((model) => [model.id, effectivePolicy(agent.id, model.id)]),
+  )
+  const dshPolicies = Object.entries(policies).filter(([, policy]) => policy.mode === 'dsh')
+  const preset = dshPolicies[0]?.[1].preset ?? 'anchored-standard'
+  agentCfg.port = port
+  agentCfg.preset = preset
+  agentCfg.enabled = true
+  saveConfig()
+  const started = await ensureBridge(agent.id, agent.dir, port, preset)
+  applyPolicyToStore(agent, port, policies)
+  return { ok: true, port, pid: started.pid, preset }
+}
+
+let autoConnectBusy = false
+async function autoConnectAllAgents() {
+  if (!config.autoConnectAll || autoConnectBusy) return
+  if (isRaftRunning()) return
+  autoConnectBusy = true
+  try {
+    for (const agent of scanAgents().filter((item) => item.builtin)) {
+      const cfg = config.agents[agent.id] ?? { autoConnect: true, connected: false, port: 0 }
+      if (cfg.autoConnect === false) continue
+      if (cfg.connected === true && cfg.port > 0) {
+        const identity = await bridgeIdentity(cfg.port)
+        if (identity && identity.raftAgentId === agent.id) continue
+      }
+      const result = await connectAgent(agent)
+      if (result.ok) log(`auto-connect ${agent.id}: port=${result.port} already=${Boolean(result.already)}`)
+      else log(`auto-connect ${agent.id} skipped: ${result.error}`)
+    }
+  } catch (error) {
+    log('auto-connect pass failed: ' + error.message)
+  } finally {
+    autoConnectBusy = false
   }
 }
 
@@ -988,39 +1072,9 @@ const server = createServer(async (req, res) => {
     const agentId = decodeURIComponent(agentMatch[1])
     const agent = scanAgents().find((item) => item.id === agentId)
     if (!agent) return send(404, { error: 'agent not found' })
-    if (!agent.builtin) return send(400, { error: 'agent does not have a builtin runtime' })
-    const runtimeMap = runtimeFromRunnerLogs()
-    if (Object.keys(runtimeMap).length > 0 && runtimeMap[agentId] && runtimeMap[agentId].runtime !== 'builtin') {
-      return send(400, { error: `当前 runtime 是 ${runtimeMap[agentId].runtime}，桥只对 builtin runtime 生效` })
-    }
-    if (isRaftRunning()) return send(409, { error: '请先退出 Raft，再接入或切换 agent' })
-    const agentCfg = agentConfig(agentId)
-    let port = 0
-    if (agentCfg.port && agentCfg.port > 0) {
-      const existing = await bridgeIdentity(agentCfg.port)
-      if (!existing || existing.raftAgentId === agentId) port = agentCfg.port
-    }
-    if (!port) {
-      const used = new Set(Object.values(config.agents).map((item) => item.port).filter(Boolean))
-      for (let candidate = BRIDGE_PORT_BASE; candidate < BRIDGE_PORT_BASE + 50; candidate++) {
-        if (used.has(candidate)) continue
-        const existing = await bridgeIdentity(candidate)
-        if (!existing) { port = candidate; break }
-      }
-    }
-    if (!port) return send(500, { error: 'no free bridge port' })
-    const policies = Object.fromEntries(
-      modelsOfAgent(agent).map((model) => [model.id, effectivePolicy(agentId, model.id)]),
-    )
-    const dshPolicies = Object.entries(policies).filter(([, policy]) => policy.mode === 'dsh')
-    const preset = dshPolicies[0]?.[1].preset ?? 'anchored-standard'
-    agentCfg.port = port
-    agentCfg.enabled = true
-    saveConfig()
     try {
-      const started = await ensureBridge(agentId, agent.dir, port, preset)
-      applyPolicyToStore(agent, port, policies)
-      send(200, { ok: true, port, pid: started.pid, preset })
+      const result = await connectAgent(agent)
+      send(result.ok ? 200 : 400, result)
     } catch (error) {
       send(500, { error: error.message })
     }
@@ -1034,6 +1088,9 @@ const server = createServer(async (req, res) => {
     if (isRaftRunning()) return send(409, { error: '请先退出 Raft，再断开 agent' })
     await stopBridge(agentId)
     restoreStore(agent)
+    const cfg = agentConfig(agentId)
+    cfg.autoConnect = false
+    saveConfig()
     send(200, { ok: true })
     return
   }
@@ -1046,4 +1103,6 @@ server.listen(PORT, HOST, () => {
   log(`raft-dsh-console listening on http://${HOST}:${PORT} (data=${DATA_DIR})`)
   console.log(`raft-dsh-console: http://${HOST}:${PORT}`)
   connectLiveMux()
+  void autoConnectAllAgents()
+  setInterval(() => void autoConnectAllAgents(), 8000)
 })

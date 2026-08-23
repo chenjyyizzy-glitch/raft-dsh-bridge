@@ -13,7 +13,8 @@
   （空闲/思考/输出/工具/继续）与最近 1–2 行思考内容（最多保留 240 字符）；
 - token 统计：首 token 平均耗时、解码 tok/s、缓存命中率、累计输入/输出 token，
   数据来自 DSH `session.list` 的 projections（约 15 秒刷新一次）；
-- “本地服务”卡：可按本机配置命令启动/停止 DSH 与 Raft；
+- “本地服务”卡：可按本机 `service-commands.json` 中配置的桌面 bat 启动/停止 DSH 与 Raft；
+- 默认自动接入：Raft 退出后，所有 builtin agent 会自动接入 DSH；手动断开某 agent 会关闭它的自动接入。
 - 接入/断开按钮：写 Raft `models-store.json` 前检测 Raft 是否运行；
   运行中拒绝写，需要先退出 Raft。
 
@@ -30,8 +31,8 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/state` | 全量状态（agent 名称/模型/推理深度/实时思考/token 统计） |
-| POST | `/api/system/dsh/start` / `stop` | 按本机配置命令启动/停止 DSH |
-| POST | `/api/system/raft/start` / `stop` | 按本机配置命令启动/停止 Raft |
+| POST | `/api/system/dsh/start` / `stop` | 按本机配置的 bat 启动/停止 DSH |
+| POST | `/api/system/raft/start` / `stop` | 按本机配置的 bat 启动/停止 Raft |
 | POST | `/api/agents/:id/connect` | 启动桥 + 按默认策略写 models-store |
 | POST | `/api/agents/:id/disconnect` | 停桥 + 恢复备份 |
 

@@ -212,7 +212,13 @@ function agentCard(agent) {
   if (!agent.connected) {
     const note = document.createElement('span')
     note.className = 'action-note'
-    note.textContent = state.raft.running ? '接入时请先退出 Raft，完成后重新打开 Raft' : 'Raft 已退出，可以接入'
+    if (agent.autoConnect === false) {
+      note.textContent = '该 agent 已设为手动接入'
+    } else if (state.raft.running) {
+      note.textContent = '默认自动接入：退出 Raft 后将自动完成接入'
+    } else {
+      note.textContent = 'Raft 已退出，正在自动接入（最长 8 秒）'
+    }
     actions.append(note)
   }
 

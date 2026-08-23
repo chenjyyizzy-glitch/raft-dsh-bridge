@@ -71,7 +71,9 @@ Daily flow:
 4. Use Raft normally; the console shows model, reasoning effort, live thinking, and token stats.
 5. To stop: stop Raft/DSH from the “Local services” card; when disconnecting an agent, stop Raft first → click “Disconnect DSH” (“断开 DSH”) → `node scripts/console-ctl.mjs stop`.
 
-Raft/DSH start-stop commands live in the local `~/.raft-dsh-console/service-commands.json` file. The repo ships no machine-specific batch files.
+Raft/DSH start-stop commands live in the local `~/.raft-dsh-console/service-commands.json` file and can point directly at desktop bats, for example `{"dsh":{"start":{"bat":"C:\Users\<you>\Desktop\Start DSH.bat"}}}`. The repo ships no machine-specific batch files.
+
+All builtin agents are auto-connected by default: while Raft is stopped, the console connects every builtin agent within about 8 seconds. Manually disconnecting an agent turns off auto-connect for that agent only; clicking Connect DSH turns it back on.
 
 The bridge also hardens the copied `raft.ps1` with
 `[Console]::InputEncoding = $utf8NoBom` so UTF-8 piped messages do not get
