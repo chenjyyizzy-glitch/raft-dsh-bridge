@@ -39,6 +39,7 @@ const dshStatsCache = new Map()
 const builtinSettingsCache = new Map()
 let raftApiRefreshBackoffUntil = 0
 let raftApiRefreshBackoffToken = ''
+let raftProxyCache = { at: 0, map: {} }
 
 const STATIC_PRESETS = [
   { id: 'standard', trust: 'system', name: 'Standard' },
@@ -445,6 +446,95 @@ function restoreStore(agent) {
   return false
 }
 
+function parseRaftWrapperEnv(file) {
+  try {
+    const lines = readFileSync(file, 'utf8').split(/\n/).map((line) => line.trimEnd())
+    let proxyUrl = ''
+    let tokenFile = ''
+    for (const line of lines) {
+      if (line.includes('SLOCK_AGENT_PROXY_URL=')) {
+        const parts = line.split("'")
+        if (parts[1]) proxyUrl = parts[1]
+      }
+      if (line.includes('SLOCK_AGENT_PROXY_TOKEN_FILE=')) {
+        const parts = line.split("'")
+        if (parts[1]) tokenFile = parts[1]
+      }
+    }
+    if (!proxyUrl || !tokenFile || !existsSync(tokenFile)) return null
+    const token = readFileSync(tokenFile, 'utf8').trim()
+    if (!token) return null
+    return { proxyUrl: proxyUrl.endsWith('/') ? proxyUrl.slice(0, -1) : proxyUrl, token }
+  } catch { return null }
+}
+
+function raftProxyContext() {
+  for (const agent of scanAgents()) {
+    const stable = join(DATA_DIR, 'agents', agent.id, 'cli', 'raft.ps1')
+    let context = existsSync(stable) ? parseRaftWrapperEnv(stable) : null
+    if (!context) {
+      const root = join(SLOCK_ROOT, 'cli-transport', agent.id)
+      if (existsSync(root)) {
+        const dirs = readdirSync(root, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => join(root, entry.name))
+          .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
+        for (const dir of dirs) {
+          context = parseRaftWrapperEnv(join(dir, 'raft.ps1'))
+          if (context) break
+        }
+      }
+    }
+    if (context) return context
+  }
+  return null
+}
+
+async function fetchJsonWithTimeout(url, headers, timeoutMs = 4000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, { headers, signal: controller.signal })
+    if (!response.ok) return null
+    return await response.json()
+  } catch { return null } finally { clearTimeout(timer) }
+}
+
+// The local daemon agent-proxy is the reliable name source: it uses the
+// runner's own credential, so it keeps working even when the user-session
+// access/refresh token is expired. It also exposes Raft's current displayName.
+async function raftProfilesViaProxy() {
+  const now = Date.now()
+  if (now - raftProxyCache.at < 20000) return raftProxyCache.map
+  const context = raftProxyContext()
+  if (!context) return {}
+  try {
+    const auth = { Authorization: `Bearer ${context.token}` }
+    const server = await fetchJsonWithTimeout(`${context.proxyUrl}/internal/agent-api/server`, auth)
+    if (!server || !Array.isArray(server.agents)) return {}
+    const handles = [...new Set(server.agents.map((agent) => agent.name).filter(Boolean))]
+    const map = {}
+    await Promise.all(handles.map(async (handle) => {
+      const profile = await fetchJsonWithTimeout(
+        `${context.proxyUrl}/internal/agent-api/profile?target=${encodeURIComponent('@' + handle)}`,
+        auth,
+      )
+      if (!profile?.id) return
+      map[profile.id] = {
+        name: profile.name ?? handle,
+        displayName: profile.displayName ?? null,
+        model: profile.model ?? null,
+        reasoningEffort: profile.reasoningEffort ?? null,
+      }
+    }))
+    raftProxyCache = { at: now, map }
+    return map
+  } catch {
+    raftProxyCache = { at: now, map: {} }
+    return {}
+  }
+}
+
 async function raftApiContext() {
   try {
     const sessionPath = join(SLOCK_ROOT, 'computer', 'user-session.json')
@@ -750,6 +840,7 @@ async function buildState() {
   const dsh = await httpGetText(`${DSH_BASE}/`)
   const raftRunning = isRaftRunning()
   const runtimeMap = raftAgentInfoMap()
+  const proxyMap = await raftProfilesViaProxy()
   const apiMap = await raftAgentApiInfo()
   const candidates = scanAgents().filter((agent) => {
     const runtime = runtimeMap[agent.id]?.runtime
@@ -763,16 +854,20 @@ async function buildState() {
     const identity = port > 0 ? await bridgeIdentity(port) : null
     const connected = agentCfg.connected === true && identity !== null && identity.raftAgentId === agent.id
     const info = runtimeMap[agent.id] ?? {}
+    const proxy = proxyMap[agent.id] ?? {}
     const api = apiMap[agent.id] ?? {}
     const builtinSettings = builtinSessionSettings(agent, info.model)
     const stats = connected && identity.dshSessionId ? await dshSessionStats(identity.dshSessionId) : null
     const liveTurn = connected && identity.dshSessionId ? liveTurnFor(identity.dshSessionId) : null
+    const effortKnown = 'reasoningEffort' in proxy || 'reasoningEffort' in api
+    const effort = proxy.reasoningEffort ?? api.reasoningEffort
     return {
       ...agent,
-      // Raft API is authoritative for renames; runner-list is a live fallback
-      name: api.name || info.name || agent.name || null,
-      currentModel: api.model || info.model || agent.models?.[0]?.id || null,
-      reasoningEffort: api.reasoningEffort || ('reasoningEffort' in api ? 'default' : builtinSettings?.effort ?? null),
+      // Local agent-proxy profile is authoritative for Raft displayName,
+      // then user-session API, then the runner list.
+      name: proxy.displayName || proxy.name || api.name || info.name || agent.name || null,
+      currentModel: proxy.model || api.model || info.model || agent.models?.[0]?.id || null,
+      reasoningEffort: effort || (effortKnown ? 'default' : builtinSettings?.effort ?? null),
       port,
       enabled: agentCfg.enabled ?? false,
       connected,

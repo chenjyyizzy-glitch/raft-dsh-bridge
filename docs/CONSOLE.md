@@ -6,7 +6,7 @@
 ## 页面内容
 
 - 每张 agent 卡片只显示 **Raft 中的 agent 名称**（不显示 id/代码），
-  名称以 Raft API 为准，API 不可用时回退到 `raft-computer runners list`；
+  名称以 Raft agent-proxy 的 profile API 为准（显示 displayName），用户 API / runner list 仅作回退；
 - 卡片显示 Raft 中该 agent 的 **当前模型 + 推理深度**，不再展示
   Pro/Flash 每模型覆盖策略；
 - 实时思考状态：控制台直接连接 DSH `events.mux`，显示当前阶段
