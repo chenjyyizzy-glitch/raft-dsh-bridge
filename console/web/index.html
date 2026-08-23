@@ -17,6 +17,10 @@ main { max-width:1560px; margin:14px auto; padding:0 16px 44px; }
 .card:hover { border-color:rgba(45,212,191,.28); }
 #services { display:grid; grid-template-columns:repeat(2, minmax(320px, 1fr)); gap:10px; }
 .service-row { background:rgba(15,23,42,.55); border:1px solid var(--line); border-radius:10px; padding:8px 12px; margin-top:0; }
+.service-progress { height:3px; margin-top:7px; border-radius:999px; background:rgba(20,184,166,.15); overflow:hidden; }
+.service-progress-bar { display:block; width:45%; height:100%; background:linear-gradient(90deg, transparent, #2dd4bf, transparent); animation:service-slide 1.15s linear infinite; }
+.service-transition-text { display:block; margin-top:5px; font-size:12px; color:var(--accent); }
+@keyframes service-slide { 0% { transform:translateX(-110%); } 100% { transform:translateX(340%); } }
 #agents { display:grid; grid-template-columns:repeat(auto-fill, minmax(470px, 1fr)); gap:13px; margin-top:10px; }
 .agent-card { border-left:3px solid var(--line-soft); margin-bottom:0; }
 .agent-card.connected { border-left-color:var(--accent-strong); }
@@ -227,8 +231,13 @@ function agentCard(agent) {
 }
 
 function serviceRow(label, running, configured, serviceName) {
+  const transition = configured.transition ?? {}
+  const busy = Boolean(transition.action) || serviceBusy
+  const box = document.createElement('div')
+  box.className = 'service-row'
+
   const row = document.createElement('div')
-  row.className = 'row service-row'
+  row.className = 'row'
   row.style.justifyContent = 'flex-start'
 
   const name = document.createElement('span')
@@ -237,20 +246,20 @@ function serviceRow(label, running, configured, serviceName) {
   name.textContent = label
 
   const badge = document.createElement('span')
-  badge.className = `badge ${running ? 'ok' : 'bad'}`
-  badge.textContent = running ? '运行中' : '未运行'
+  badge.className = `badge ${running ? 'ok' : 'bad'}${transition.action ? ' live' : ''}`
+  badge.textContent = transition.action === 'start' ? '启动中…' : transition.action === 'stop' ? '停止中…' : running ? '运行中' : '未运行'
   row.append(name, badge)
 
   const startBtn = document.createElement('button')
   startBtn.textContent = '启动'
-  startBtn.disabled = serviceBusy || running || !configured.startConfigured
+  startBtn.disabled = busy || running || !configured.startConfigured
   startBtn.onclick = () => serviceAction(serviceName, 'start', startBtn)
   row.append(startBtn)
 
   const stopBtn = document.createElement('button')
   stopBtn.className = 'danger'
   stopBtn.textContent = '停止'
-  stopBtn.disabled = serviceBusy || !running || !configured.stopConfigured
+  stopBtn.disabled = busy || !running || !configured.stopConfigured
   stopBtn.onclick = () => serviceAction(serviceName, 'stop', stopBtn)
   row.append(stopBtn)
 
@@ -260,7 +269,26 @@ function serviceRow(label, running, configured, serviceName) {
     note.textContent = '未配置启停命令（在 ~/.raft-dsh-console/service-commands.json 配置）'
     row.append(note)
   }
-  return row
+  box.append(row)
+
+  if (transition.action) {
+    const progress = document.createElement('div')
+    progress.className = 'service-progress'
+    const bar = document.createElement('span')
+    bar.className = 'service-progress-bar'
+    progress.append(bar)
+    const text = document.createElement('span')
+    text.className = 'service-transition-text'
+    text.textContent = transition.action === 'start' ? `正在启动 ${label}，完成后状态会自动更新` : `正在停止 ${label}，完成后状态会自动更新`
+    box.append(progress, text)
+  } else if (transition.error) {
+    const error = document.createElement('span')
+    error.className = 'action-note'
+    error.style.color = 'var(--bad)'
+    error.textContent = transition.error
+    box.append(error)
+  }
+  return box
 }
 
 function renderServices() {

@@ -757,6 +757,11 @@ function liveTurnFor(sessionId) {
   }
 }
 
+const serviceTransitions = {
+  dsh: { action: null, since: 0, error: null },
+  raft: { action: null, since: 0, error: null },
+}
+
 function normalizeServiceCommand(value) {
   if (typeof value === 'string' && value.trim()) return { command: value }
   if (value && typeof value === 'object') {
@@ -786,6 +791,27 @@ function serviceCommands() {
   }
 }
 
+async function watchServiceStart(service) {
+  const transition = serviceTransitions[service]
+  const deadline = Date.now() + 150_000
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    if (transition.action !== 'start') return
+    if (service === 'dsh') {
+      const dsh = await httpGetText(`${DSH_BASE}/`, 2500)
+      if (dsh.ok) { transition.action = null; transition.error = null; return }
+    } else if (isRaftRunning()) {
+      transition.action = null
+      transition.error = null
+      return
+    }
+  }
+  if (transition.action === 'start') {
+    transition.action = null
+    transition.error = '启动超时（150 秒未检测到运行状态），请检查桌面 bat'
+  }
+}
+
 function runServiceAction(service, action) {
   const entry = serviceCommands()[service]?.[action]
   if (!entry || (!entry.bat && !entry.exe && !entry.command)) {
@@ -797,20 +823,29 @@ function runServiceAction(service, action) {
   let args = entry.exe ? [...(entry.args ?? [])] : ['/d', '/s', '/c']
   if (entry.bat) args.push('call', entry.bat, ...(entry.args ?? []))
   else if (!entry.exe) args.push(entry.command)
+  const transition = serviceTransitions[service]
+  transition.action = action
+  transition.since = Date.now()
+  transition.error = null
   try {
     if (action === 'start') {
       const child = spawn(file, args, {
         detached: true, stdio: 'ignore', windowsHide: true, ...options,
       })
       child.unref()
-      return { ok: true, service, action, started: true }
+      void watchServiceStart(service)
+      return { ok: true, service, action, started: true, transition: 'starting' }
     }
     execFileSync(file, args, {
       stdio: 'ignore', timeout: 120_000, windowsHide: true, ...options,
     })
-    return { ok: true, service, action }
+    transition.action = null
+    transition.error = null
+    return { ok: true, service, action, transition: 'done' }
   } catch (error) {
-    return { ok: false, service, action, error: error.message }
+    transition.action = null
+    transition.error = error.message
+    return { ok: false, service, action, error: error.message, transition: 'failed' }
   }
 }
 
@@ -917,11 +952,13 @@ async function buildState() {
         status: dsh.status,
         startConfigured: Boolean(commands.dsh.start?.bat || commands.dsh.start?.exe || commands.dsh.start?.command),
         stopConfigured: Boolean(commands.dsh.stop?.bat || commands.dsh.stop?.exe || commands.dsh.stop?.command),
+        transition: { ...serviceTransitions.dsh },
       },
       raft: {
         running: raftRunning,
         startConfigured: Boolean(commands.raft.start?.bat || commands.raft.start?.exe || commands.raft.start?.command),
         stopConfigured: Boolean(commands.raft.stop?.bat || commands.raft.stop?.exe || commands.raft.stop?.command),
+        transition: { ...serviceTransitions.raft },
       },
     },
     agents,
