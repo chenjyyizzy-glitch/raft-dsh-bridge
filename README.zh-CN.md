@@ -95,14 +95,13 @@ node scripts/console-ctl.mjs restart
 
 日常流程：
 
-1. 按原方式启动 DSH；
-2. 按原方式启动 Raft；
-3. 启动桥控制台：`node scripts/console-ctl.mjs start`，浏览器打开 `http://127.0.0.1:8970`；
-4. 首次接入某个 agent：先完全退出 Raft → 控制台点该 agent 的“接入 DSH” → 重新打开 Raft；
-5. 之后正常使用 Raft，控制台实时显示模型、推理深度、思考状态和 token 统计；
-6. 停止：先退出 Raft，再在控制台点“断开 DSH”恢复 `models-store.json`，最后 `node scripts/console-ctl.mjs stop`。
+1. 启动桥控制台：`node scripts/console-ctl.mjs start`，浏览器打开 `http://127.0.0.1:8970`；
+2. 在控制台顶部“本地服务”区点“启动”DSH 和 Raft（也可以按原方式启动）；
+3. 首次接入某个 agent：先完全退出 Raft → 控制台点该 agent 的“接入 DSH” → 重新打开 Raft；
+4. 之后正常使用 Raft，控制台实时显示模型、推理深度、思考状态和 token 统计；
+5. 停止：控制台“本地服务”区点“停止”Raft/DSH；需要断开 agent 时先停止 Raft，再点“断开 DSH”，最后 `node scripts/console-ctl.mjs stop`。
 
-说明：本仓库**不包含**和你电脑一一对应的 Raft/DSH 启动 bat；那些属于本地环境，按原方式操作即可。仓库只提供桥本身、控制台，以及修改/恢复 `models-store.json` 的脚本。
+说明：Raft/DSH 的启停命令放在本机 `~/.raft-dsh-console/service-commands.json`（仓库不包含机器专用 bat）。格式为 `{"dsh":{"start":{"command":"...","cwd":"可选"}},"raft":{...}}`。仓库只提供桥本身、控制台，以及修改/恢复 `models-store.json` 的脚本。
 
 桥在复制 `raft.ps1` 时会自动注入 `[Console]::InputEncoding = $utf8NoBom`，避免中文消息经 PowerShell 5.1 的 stdin 管道被按系统 ANSI/GBK 解码成乱码。
 

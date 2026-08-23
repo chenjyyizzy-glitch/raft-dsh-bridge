@@ -65,14 +65,13 @@ You need:
 
 Daily flow:
 
-1. Start DSH the usual way.
-2. Start Raft the usual way.
-3. Start the console: `node scripts/console-ctl.mjs start`, then open `http://127.0.0.1:8970`.
-4. First-time connect for an agent: fully quit Raft → click “Connect DSH” (“接入 DSH”) for that agent → reopen Raft.
-5. Use Raft normally; the console shows model, reasoning effort, live thinking, and token stats.
-6. To stop: quit Raft → click “Disconnect DSH” (“断开 DSH”) to restore `models-store.json` → `node scripts/console-ctl.mjs stop`.
+1. Start the console: `node scripts/console-ctl.mjs start`, then open `http://127.0.0.1:8970`.
+2. In the “Local services” card at the top, click Start for DSH and Raft (or start them the usual way).
+3. First-time connect for an agent: fully quit Raft → click “Connect DSH” (“接入 DSH”) for that agent → reopen Raft.
+4. Use Raft normally; the console shows model, reasoning effort, live thinking, and token stats.
+5. To stop: stop Raft/DSH from the “Local services” card; when disconnecting an agent, stop Raft first → click “Disconnect DSH” (“断开 DSH”) → `node scripts/console-ctl.mjs stop`.
 
-This repo intentionally does **not** include machine-specific batch files for starting Raft/DSH or opening the console; those belong to your local environment.
+Raft/DSH start-stop commands live in the local `~/.raft-dsh-console/service-commands.json` file. The repo ships no machine-specific batch files.
 
 The bridge also hardens the copied `raft.ps1` with
 `[Console]::InputEncoding = $utf8NoBom` so UTF-8 piped messages do not get

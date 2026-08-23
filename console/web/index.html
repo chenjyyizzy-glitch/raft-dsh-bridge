@@ -55,14 +55,29 @@ button:disabled { opacity:.45; cursor:not-allowed; }
       <span class="agent-name">Agent</span>
       <span class="meta">名称实时来自 Raft（改名后 15 秒内自动更新）</span>
     </div>
+  <section class="card">
+    <div class="head">
+      <span class="agent-name">本地服务</span>
+      <span class="meta">Raft / DSH 启停命令从本机配置读取，仓库不包含任何机器专用 bat</span>
+    </div>
+    <div id="services" style="margin-top:10px"></div>
+  </section>
+
+  <section class="card">
+    <div class="head">
+      <span class="agent-name">Agent</span>
+      <span class="meta">名称实时来自 Raft（改名后 15 秒内自动更新）</span>
+    </div>
     <div id="agents" style="margin-top:10px"></div>
   </section>
 </main>
 <script>
 const agentsEl = document.getElementById('agents')
+const servicesEl = document.getElementById('services')
 const topEl = document.getElementById('topStatus')
 let state = null
 let actionBusy = false
+let serviceBusy = false
 
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]))
@@ -193,6 +208,71 @@ function agentCard(agent) {
   return card
 }
 
+function serviceRow(label, running, configured, serviceName) {
+  const row = document.createElement('div')
+  row.className = 'row'
+  row.style.marginTop = '10px'
+  row.style.justifyContent = 'flex-start'
+
+  const name = document.createElement('span')
+  name.style.minWidth = '80px'
+  name.style.fontWeight = '600'
+  name.textContent = label
+
+  const badge = document.createElement('span')
+  badge.className = `badge ${running ? 'ok' : 'bad'}`
+  badge.textContent = running ? '运行中' : '未运行'
+  row.append(name, badge)
+
+  const startBtn = document.createElement('button')
+  startBtn.textContent = '启动'
+  startBtn.disabled = serviceBusy || running || !configured.startConfigured
+  startBtn.onclick = () => serviceAction(serviceName, 'start', startBtn)
+  row.append(startBtn)
+
+  const stopBtn = document.createElement('button')
+  stopBtn.className = 'danger'
+  stopBtn.textContent = '停止'
+  stopBtn.disabled = serviceBusy || !running || !configured.stopConfigured
+  stopBtn.onclick = () => serviceAction(serviceName, 'stop', stopBtn)
+  row.append(stopBtn)
+
+  if (!configured.startConfigured || !configured.stopConfigured) {
+    const note = document.createElement('span')
+    note.className = 'action-note'
+    note.textContent = '未配置启停命令（在 ~/.raft-dsh-console/service-commands.json 配置）'
+    row.append(note)
+  }
+  return row
+}
+
+function renderServices() {
+  if (!servicesEl) return
+  servicesEl.innerHTML = ''
+  const svc = state.services ?? {}
+  servicesEl.append(serviceRow('DSH', Boolean(svc.dsh?.ok), svc.dsh ?? {}, 'dsh'))
+  servicesEl.append(serviceRow('Raft', Boolean(svc.raft?.running), svc.raft ?? {}, 'raft'))
+}
+
+async function serviceAction(service, action, btn) {
+  const original = btn.textContent
+  serviceBusy = true
+  btn.disabled = true
+  btn.textContent = action === 'start' ? '启动中…' : '停止中…'
+  try {
+    const res = await fetch(`/api/system/${service}/${action}`, { method: 'POST' })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(j.error || res.status)
+    btn.textContent = action === 'start' ? '已发出启动命令' : '已完成'
+    serviceBusy = false
+    setTimeout(load, 1500)
+  } catch (e) {
+    btn.textContent = `失败：${e.message}`
+    serviceBusy = false
+    setTimeout(() => { btn.textContent = original }, 3000)
+  }
+}
+
 function render() {
   topEl.innerHTML = ''
   const dshBadge = document.createElement('span')
@@ -206,6 +286,8 @@ function render() {
   refresh.textContent = '刷新'
   refresh.onclick = load
   topEl.append(dshBadge, raftBadge, refresh)
+
+  renderServices()
 
   agentsEl.innerHTML = ''
   if (!Array.isArray(state.agents) || state.agents.length === 0) {

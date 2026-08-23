@@ -30,6 +30,7 @@ const NODE = process.execPath
 const BRIDGE_PORT_BASE = Number(process.env.BRIDGE_PORT_BASE ?? 8901)
 const OFFICIAL_DEEPSEEK_BASE = process.env.OFFICIAL_DEEPSEEK_BASE ?? 'https://api.deepseek.com'
 const CONFIG_FILE = join(DATA_DIR, 'config.json')
+const SERVICE_COMMANDS_FILE = join(DATA_DIR, 'service-commands.json')
 const CHECK_RAFT = process.env.RAFT_CHECK !== '0'
 const RAFT_EXE = process.env.RAFT_EXE ?? 'raft-computer.exe'
 let raftInfoCache = { at: 0, map: {} }
@@ -661,6 +662,50 @@ function liveTurnFor(sessionId) {
   }
 }
 
+function normalizeServiceCommand(value) {
+  if (typeof value === 'string' && value.trim()) return { command: value, cwd: undefined }
+  if (value && typeof value === 'object' && typeof value.command === 'string' && value.command.trim()) {
+    return { command: value.command, cwd: typeof value.cwd === 'string' && value.cwd.trim() ? value.cwd : undefined }
+  }
+  return { command: '', cwd: undefined }
+}
+
+function serviceCommands() {
+  const file = readJson(SERVICE_COMMANDS_FILE, {})
+  return {
+    dsh: {
+      start: normalizeServiceCommand(process.env.DSH_START_CMD ?? file.dsh?.start),
+      stop: normalizeServiceCommand(process.env.DSH_STOP_CMD ?? file.dsh?.stop),
+    },
+    raft: {
+      start: normalizeServiceCommand(process.env.RAFT_START_CMD ?? file.raft?.start),
+      stop: normalizeServiceCommand(process.env.RAFT_STOP_CMD ?? file.raft?.stop),
+    },
+  }
+}
+
+function runServiceAction(service, action) {
+  const entry = serviceCommands()[service]?.[action]
+  if (!entry?.command) return { ok: false, error: `${service} ${action} 命令未配置：编辑 ${SERVICE_COMMANDS_FILE} 或设置环境变量` }
+  const comspec = process.env.ComSpec ?? 'cmd.exe'
+  const options = entry.cwd ? { cwd: entry.cwd } : {}
+  try {
+    if (action === 'start') {
+      const child = spawn(comspec, ['/d', '/s', '/c', entry.command], {
+        detached: true, stdio: 'ignore', windowsHide: true, ...options,
+      })
+      child.unref()
+      return { ok: true, service, action, started: true }
+    }
+    execFileSync(comspec, ['/d', '/s', '/c', entry.command], {
+      stdio: 'ignore', timeout: 120_000, windowsHide: true, ...options,
+    })
+    return { ok: true, service, action }
+  } catch (error) {
+    return { ok: false, service, action, error: error.message }
+  }
+}
+
 // ------------------------------------------------------------- API state ---
 function builtinSessionSettings(agent, runnerModel) {
   const cached = builtinSettingsCache.get(agent.id)
@@ -746,10 +791,24 @@ async function buildState() {
         : null,
     }
   }))
+  const commands = serviceCommands()
   return {
     console: { port: PORT, dataDir: DATA_DIR },
     dsh: { base: DSH_BASE, ok: dsh.ok, status: dsh.status },
     raft: { running: raftRunning },
+    services: {
+      dsh: {
+        ok: dsh.ok,
+        status: dsh.status,
+        startConfigured: Boolean(commands.dsh.start?.command),
+        stopConfigured: Boolean(commands.dsh.stop?.command),
+      },
+      raft: {
+        running: raftRunning,
+        startConfigured: Boolean(commands.raft.start?.command),
+        stopConfigured: Boolean(commands.raft.stop?.command),
+      },
+    },
     agents,
   }
 }
@@ -780,6 +839,18 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/state') {
     send(200, await buildState())
+    return
+  }
+
+  let serviceAction = null
+  if (url.pathname.startsWith('/api/system/')) {
+    const parts = url.pathname.split('/')
+    if (parts.length === 5 && (parts[3] === 'dsh' || parts[3] === 'raft') && (parts[4] === 'start' || parts[4] === 'stop')) serviceAction = [parts[3], parts[4]]
+  }
+  if (serviceAction && req.method === 'POST') {
+    const result = runServiceAction(serviceAction[0], serviceAction[1])
+
+    send(result.ok ? 200 : 400, result)
     return
   }
 
