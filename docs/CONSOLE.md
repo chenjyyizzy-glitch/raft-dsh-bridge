@@ -11,7 +11,7 @@
   Pro/Flash 每模型覆盖策略；
 - 实时思考状态：控制台直接连接 DSH `events.mux`，显示当前阶段
   （空闲/思考/输出/工具/继续）与最近 1–2 行思考内容（最多保留 240 字符）；
-- token 统计：首 token 平均耗时、解码 tok/s、缓存命中率、累计输入 token，
+- token 统计：首 token 平均耗时、解码 tok/s、缓存命中率、累计输入/输出 token，
   数据来自 DSH `session.list` 的 projections（约 15 秒刷新一次）；
 - “本地服务”卡：可按本机配置命令启动/停止 DSH 与 Raft；
 - 接入/断开按钮：写 Raft `models-store.json` 前检测 Raft 是否运行；

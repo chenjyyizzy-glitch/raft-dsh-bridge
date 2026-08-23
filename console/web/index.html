@@ -12,10 +12,13 @@ header { position:sticky; top:0; z-index:10; padding:14px 22px; background:rgba(
 h1 { font-size:17px; margin:0; letter-spacing:.2px; }
 h1::before { content:''; display:inline-block; width:9px; height:9px; border-radius:3px; margin-right:9px; background:linear-gradient(135deg,#2dd4bf,#0d9488); box-shadow:0 0 14px rgba(45,212,191,.55); }
 .meta { color:var(--muted); font-size:12px; }
-main { max-width:1040px; margin:18px auto; padding:0 18px 64px; }
-.card { position:relative; background:linear-gradient(180deg, rgba(30,41,59,.42), rgba(15,23,42,.88)); border:1px solid var(--line); border-radius:14px; padding:15px 17px; margin-bottom:14px; box-shadow:0 18px 46px rgba(0,0,0,.32); backdrop-filter:blur(8px); transition:border-color .15s ease, transform .15s ease; }
+main { max-width:1560px; margin:14px auto; padding:0 16px 44px; }
+.card { position:relative; background:linear-gradient(180deg, rgba(30,41,59,.42), rgba(15,23,42,.88)); border:1px solid var(--line); border-radius:13px; padding:12px 14px; margin-bottom:14px; box-shadow:0 14px 34px rgba(0,0,0,.28); backdrop-filter:blur(8px); transition:border-color .15s ease, transform .15s ease; }
 .card:hover { border-color:rgba(45,212,191,.28); }
-.agent-card { border-left:3px solid var(--line-soft); }
+#services { display:grid; grid-template-columns:repeat(2, minmax(320px, 1fr)); gap:10px; }
+.service-row { background:rgba(15,23,42,.55); border:1px solid var(--line); border-radius:10px; padding:8px 12px; margin-top:0; }
+#agents { display:grid; grid-template-columns:repeat(auto-fill, minmax(470px, 1fr)); gap:13px; margin-top:10px; }
+.agent-card { border-left:3px solid var(--line-soft); margin-bottom:0; }
 .agent-card.connected { border-left-color:var(--accent-strong); }
 .agent-card.active { border-left-color:var(--accent); }
 .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
@@ -29,16 +32,16 @@ main { max-width:1040px; margin:18px auto; padding:0 18px 64px; }
 .muted { color:var(--muted); }
 .agent-meta { margin:9px 0 11px; font-size:13px; color:var(--muted); }
 .agent-meta b { color:#e6f7f4; font-weight:600; }
-.thinking { background:rgba(2,6,23,.62); border:1px solid var(--line); border-radius:9px; padding:8px 11px; font-size:12px; color:#d7e3f4; min-height:2.9em; }
+.thinking { background:rgba(2,6,23,.62); border:1px solid var(--line); border-radius:9px; padding:7px 10px; font-size:12px; color:#d7e3f4; min-height:2.7em; }
 .thinking .phase-line { display:flex; align-items:center; gap:8px; color:var(--muted); margin-bottom:3px; }
 .thinking .think-scroll { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; line-height:1.45; max-height:2.9em; white-space:pre-wrap; word-break:break-word; color:var(--fg); }
 .thinking .think-scroll:empty::before { content:'（暂无思考内容）'; color:var(--muted); }
 .pulse { width:8px; height:8px; border-radius:50%; background:#334155; flex:0 0 auto; }
 .pulse.on { background:var(--accent); box-shadow:0 0 10px rgba(45,212,191,.8); animation:blink 1s infinite; }
 @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:.25; } }
-.stats { margin-top:11px; padding-top:9px; border-top:1px dashed var(--line); font-size:12px; color:var(--muted); }
+.stats { margin-top:8px; padding-top:7px; border-top:1px dashed var(--line); font-size:12px; color:var(--muted); }
 .stats b { color:#d9fbf4; font-weight:600; }
-.actions { margin-top:11px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.actions { margin-top:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 button { font:inherit; border:1px solid transparent; color:#032b27; background:linear-gradient(135deg,#2dd4bf,#0d9488); border-radius:8px; padding:6px 13px; cursor:pointer; font-weight:600; transition:filter .12s ease, opacity .12s ease, border-color .12s ease; }
 button:hover:not(:disabled) { filter:brightness(1.1); }
 button.ghost { background:transparent; color:#94a3b8; border-color:var(--line); }
@@ -139,7 +142,8 @@ function statsHtml(stats) {
   const tps = stats?.tokPerSec != null ? `${Math.round(stats.tokPerSec)} tok/s` : '— tok/s'
   const hit = stats?.cacheHitPct != null ? `${Math.round(stats.cacheHitPct)}%` : '—'
   const input = compactTokens(stats?.inputTokens ?? null)
-  return `首 token 平均 <b>${ttft}</b> · <b>${tps}</b> | 缓存命中 <b>${hit}</b> | 输入 <b>${input} tok</b>`
+  const output = compactTokens(stats?.outputTokens ?? null)
+  return `首 token 平均 <b>${ttft}</b> · <b>${tps}</b> | 缓存命中 <b>${hit}</b> | 输入 <b>${input} tok</b> · 输出 <b>${output} tok</b>`
 }
 
 function agentCard(agent) {
@@ -218,8 +222,7 @@ function agentCard(agent) {
 
 function serviceRow(label, running, configured, serviceName) {
   const row = document.createElement('div')
-  row.className = 'row'
-  row.style.marginTop = '10px'
+  row.className = 'row service-row'
   row.style.justifyContent = 'flex-start'
 
   const name = document.createElement('span')

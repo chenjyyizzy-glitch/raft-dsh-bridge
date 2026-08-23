@@ -67,7 +67,7 @@ npm run console
 - 每个 agent 一键接入 / 断开 / 恢复；
 - 显示 Raft 中该 agent 的当前模型与推理深度；
 - 实时显示 DSH turn 状态与最近 1–2 行思考内容；
-- 显示首 token 平均耗时、解码 tok/s、缓存命中率、累计输入 token；
+- 显示首 token 平均耗时、解码 tok/s、缓存命中率、累计输入/输出 token；
 - v4 Pro 默认 `anchored-standard`，所有 reasoning effort 跟随 Raft；
 - Flash 默认直连官方 API。
 
