@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raft DSH 控制台</title>
+<style>
+:root { color-scheme: light; --fg:#17202a; --muted:#5b6b7b; --line:#dfe5ec; --ok:#1a9e5c; --bad:#c0392b; --accent:#0f6fde; --bg:#f4f6f8; }
+* { box-sizing:border-box; }
+body { margin:0; font-family:"Segoe UI",system-ui,-apple-system,sans-serif; color:var(--fg); background:var(--bg); }
+header { padding:14px 22px; background:#fff; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+h1 { font-size:18px; margin:0; }
+.meta { color:var(--muted); font-size:12px; }
+main { max-width:980px; margin:16px auto; padding:0 18px 60px; }
+.card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:14px; }
+.agent-card { border-left:3px solid var(--line); }
+.agent-card.connected { border-left-color:var(--ok); }
+.agent-card.active { border-left-color:var(--accent); }
+.row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.agent-name { font-weight:700; font-size:16px; }
+.badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid var(--line); background:#fff; }
+.badge.ok { color:var(--ok); border-color:var(--ok); }
+.badge.bad { color:var(--bad); border-color:var(--bad); }
+.badge.live { color:var(--accent); border-color:var(--accent); }
+.badge.phase { color:var(--fg); }
+.muted { color:var(--muted); }
+.agent-meta { margin:8px 0 10px; font-size:13px; color:var(--muted); }
+.agent-meta b { color:var(--fg); font-weight:600; }
+.thinking { background:#f8fafc; border:1px solid var(--line); border-radius:6px; padding:7px 10px; font-size:12px; color:#334; min-height:2.75em; }
+.thinking .phase-line { display:flex; align-items:center; gap:8px; color:var(--muted); margin-bottom:2px; }
+.thinking .think-scroll { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; line-height:1.4; max-height:2.8em; white-space:pre-wrap; word-break:break-word; color:var(--fg); }
+.thinking .think-scroll:empty::before { content:"（暂无思考内容）"; color:var(--muted); }
+.pulse { width:8px; height:8px; border-radius:50%; background:#b6c1cc; flex:0 0 auto; }
+.pulse.on { background:var(--accent); animation:blink 1s infinite; }
+@keyframes blink { 0%,100% { opacity:1; } 50% { opacity:.25; } }
+.stats { margin-top:10px; padding-top:8px; border-top:1px dashed var(--line); font-size:12px; color:var(--muted); }
+.stats b { color:var(--fg); font-weight:600; }
+.actions { margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+button { font:inherit; border:1px solid var(--accent); color:#fff; background:var(--accent); border-radius:6px; padding:5px 12px; cursor:pointer; }
+button.ghost { background:#fff; color:var(--accent); }
+button.danger { background:#fff; color:var(--bad); border-color:var(--bad); }
+button:disabled { opacity:.45; cursor:not-allowed; }
+.action-note { font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>Raft DSH 控制台</h1><div class="meta">本地管理台 · 仅监听 127.0.0.1 · 只显示 builtin runtime agent</div></div>
+  <div class="row" id="topStatus"><span class="meta">加载中…</span></div>
+</header>
+<main>
+  <section class="card">
+    <div class="head">
+      <span class="agent-name">Agent</span>
+      <span class="meta">名称实时来自 Raft（改名后 15 秒内自动更新）</span>
+    </div>
+    <div id="agents" style="margin-top:10px"></div>
+  </section>
+</main>
+<script>
+const agentsEl = document.getElementById('agents')
+const topEl = document.getElementById('topStatus')
+let state = null
+let actionBusy = false
+
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]))
+}
+
+function compactTokens(n) {
+  if (n == null || Number.isNaN(n)) return '—'
+  if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B'
+  if (n >= 1e6) return (n / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M'
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K'
+  return String(Math.round(n))
+}
+
+function phaseText(turnState) {
+  if (!turnState) return '未接入'
+  switch (turnState.phase) {
+    case 'idle': return '空闲'
+    case 'starting': return '启动中'
+    case 'thinking': return '思考中'
+    case 'text': return '输出文本'
+    case 'tool': return turnState.lastTool ? `调用工具 · ${turnState.lastTool}` : '调用工具'
+    case 'continuing': return '工具返回，继续思考'
+    case 'error': return '出错'
+    default: return turnState.phase || '空闲'
+  }
+}
+
+function phaseActive(turnState) {
+  return turnState && turnState.phase !== 'idle' && turnState.phase !== 'error'
+}
+
+function modelLabel(value) {
+  if (!value) return '—'
+  return String(value).replace('deepseek/', '').replace(/^gpt-/, '')
+}
+
+function effortLabel(value) {
+  if (value === 'default') return '默认（跟随）'
+  return value || '—'
+}
+
+function thinkingTail(turnState) {
+  const tail = (turnState?.lastReasoningTail ?? '').trim()
+  if (tail) return tail
+  if (phaseActive(turnState)) return '（等待思考内容…）'
+  return '（暂无思考内容）'
+}
+
+function statsHtml(stats) {
+  const ttft = stats?.ttftAvgMs != null ? `${(stats.ttftAvgMs / 1000).toFixed(1)}s` : '—'
+  const tps = stats?.tokPerSec != null ? `${Math.round(stats.tokPerSec)} tok/s` : '— tok/s'
+  const hit = stats?.cacheHitPct != null ? `${Math.round(stats.cacheHitPct)}%` : '—'
+  const input = compactTokens(stats?.inputTokens ?? null)
+  return `首 token 平均 <b>${ttft}</b> · <b>${tps}</b> | 缓存命中 <b>${hit}</b> | 输入 <b>${input} tok</b>`
+}
+
+function agentCard(agent) {
+  const ts = agent.bridge?.turnState ?? null
+  const active = phaseActive(ts)
+  const card = document.createElement('div')
+  card.className = `card agent-card ${agent.connected ? 'connected' : ''} ${active ? 'active' : ''}`
+
+  const head = document.createElement('div')
+  head.className = 'head'
+  const name = document.createElement('span')
+  name.className = 'agent-name'
+  name.textContent = agent.name || '（未命名 agent）'
+  const conn = document.createElement('span')
+  conn.className = `badge ${agent.connected ? 'ok' : 'bad'}`
+  conn.textContent = agent.connected ? '已接入' : '未接入'
+  const phase = document.createElement('span')
+  phase.className = `badge phase ${active ? 'live' : ''}`
+  phase.textContent = phaseText(ts)
+  head.append(name, conn, phase)
+  if (agent.connected && agent.bridge?.busy) {
+    const busy = document.createElement('span')
+    busy.className = 'badge live'
+    busy.textContent = '请求处理中'
+    head.append(busy)
+  }
+
+  const meta = document.createElement('div')
+  meta.className = 'agent-meta'
+  meta.innerHTML = `当前模型 <b>${esc(modelLabel(agent.currentModel))}</b> · 推理深度 <b>${esc(effortLabel(agent.reasoningEffort))}</b>`
+
+  const think = document.createElement('div')
+  think.className = 'thinking'
+  const phaseLine = document.createElement('div')
+  phaseLine.className = 'phase-line'
+  const dot = document.createElement('span')
+  dot.className = `pulse ${active ? 'on' : ''}`
+  const phaseTitle = document.createElement('span')
+  phaseTitle.textContent = phaseText(ts)
+  phaseLine.append(dot, phaseTitle)
+  const scroll = document.createElement('div')
+  scroll.className = 'think-scroll'
+  scroll.textContent = thinkingTail(ts)
+  think.append(phaseLine, scroll)
+
+  const stats = document.createElement('div')
+  stats.className = 'stats'
+  stats.innerHTML = statsHtml(agent.stats)
+
+  const actions = document.createElement('div')
+  actions.className = 'actions'
+  if (agent.connected) {
+    const btn = document.createElement('button')
+    btn.className = 'danger'
+    btn.textContent = '断开 DSH'
+    btn.disabled = actionBusy
+    btn.onclick = () => agentAction(agent, 'disconnect', btn)
+    actions.append(btn)
+  } else {
+    const btn = document.createElement('button')
+    btn.textContent = state.raft.running ? '接入 DSH（请先退出 Raft）' : '接入 DSH'
+    btn.disabled = actionBusy || state.raft.running
+    btn.onclick = () => agentAction(agent, 'connect', btn)
+    actions.append(btn)
+  }
+  if (!agent.connected) {
+    const note = document.createElement('span')
+    note.className = 'action-note'
+    note.textContent = state.raft.running ? '接入时请先退出 Raft，完成后重新打开 Raft' : 'Raft 已退出，可以接入'
+    actions.append(note)
+  }
+
+  card.append(head, meta, think, stats, actions)
+  return card
+}
+
+function render() {
+  topEl.innerHTML = ''
+  const dshBadge = document.createElement('span')
+  dshBadge.className = `badge ${state.dsh.ok ? 'ok' : 'bad'}`
+  dshBadge.textContent = `DSH ${state.dsh.status ?? ''}`.trim()
+  const raftBadge = document.createElement('span')
+  raftBadge.className = `badge ${state.raft.running ? 'ok' : 'bad'}`
+  raftBadge.textContent = `Raft ${state.raft.running ? '运行中' : '未运行'}`
+  const refresh = document.createElement('button')
+  refresh.className = 'ghost'
+  refresh.textContent = '刷新'
+  refresh.onclick = load
+  topEl.append(dshBadge, raftBadge, refresh)
+
+  agentsEl.innerHTML = ''
+  if (!Array.isArray(state.agents) || state.agents.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'meta'
+    empty.textContent = '没有找到 builtin runtime agent。在 Raft 中启动一次 agent 后，这里会自动出现。'
+    agentsEl.append(empty)
+    return
+  }
+  const sorted = [...state.agents].sort((a, b) => Number(b.connected) - Number(a.connected) || String(a.name).localeCompare(String(b.name), 'zh-CN'))
+  for (const agent of sorted) agentsEl.append(agentCard(agent))
+}
+
+async function agentAction(agent, action, btn) {
+  const original = btn.textContent
+  actionBusy = true
+  btn.disabled = true
+  btn.textContent = action === 'connect' ? '接入中…' : '断开中…'
+  try {
+    const res = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/${action}`, { method: 'POST' })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(j.error || res.status)
+    btn.textContent = '完成 ✓'
+    setTimeout(load, 700)
+  } catch (e) {
+    btn.textContent = `失败：${e.message}`
+    actionBusy = false
+    btn.disabled = false
+    setTimeout(() => { if (btn.isConnected) { btn.textContent = original; actionBusy = false } }, 3000)
+  }
+}
+
+async function load() {
+  try {
+    const res = await fetch('/api/state', { cache: 'no-store' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    state = await res.json()
+    actionBusy = false
+    render()
+  } catch (e) {
+    topEl.innerHTML = `<span class="badge bad">加载失败：${esc(e.message)}</span>`
+  }
+}
+
+load()
+setInterval(load, 2000)
+</script>
+</body>
+</html>

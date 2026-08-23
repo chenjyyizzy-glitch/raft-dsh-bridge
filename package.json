@@ -1,0 +1,19 @@
+{
+  "name": "raft-dsh-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bridge a Raft (Slock) builtin agent into a DeepSeek Harness session so the DSH anchored-standard preset controls the trajectory",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "node --check scripts/raft-dsh-bridge.mjs && node --check scripts/point-raft-to-bridge.mjs && node --check scripts/restore-raft-endpoint.mjs && node --check scripts/analyze-dsh-session.mjs && node --check scripts/mock-dsh.mjs && node --check console/manager.mjs && node --check scripts/console-ctl.mjs",
+    "test": "node test/smoke.test.mjs",
+    "console": "node console/manager.mjs"
+  },
+  "devDependencies": {
+    "ws": "^8.18.0"
+  }
+}
