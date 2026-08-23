@@ -1,5 +1,7 @@
 # raft-dsh-bridge
 
+> 语言：**中文** · [English（README.md）](README.md)
+
 让 Raft（Slock）builtin agent 直接与 DeepSeek Harness（DSH）会话对话，
 从而把模型请求的首请求条件从“Raft 固定 4 工具 + 强注入”改写成 DSH 的
 `anchored-standard` 预设（Minimal 双工具 bootstrap + 默认拒绝自动注入）。

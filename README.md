@@ -1,5 +1,7 @@
 # raft-dsh-bridge
 
+> Language: **English** · [中文版（README.zh-CN.md）](README.zh-CN.md)
+
 Bridge a Raft (Slock) builtin agent into a DeepSeek Harness session so the
 model's first-request conditions are assembled by the DSH
 `anchored-standard` preset (Minimal tool pair bootstrap, default-deny context
