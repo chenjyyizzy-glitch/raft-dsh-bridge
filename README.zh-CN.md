@@ -84,6 +84,26 @@ node scripts/console-ctl.mjs start
 node scripts/console-ctl.mjs restart
 ```
 
+## 必要工具与日常使用流程
+
+需要准备：
+
+- Raft（Slock）：正常启动/退出 Raft 和 builtin agent 的官方客户端；本仓库不含它的启动脚本。
+- DSH：你本机已有的 DeepSeek Harness web 及 `anchored-standard` 预设；按你原来的方式启动。
+- Node.js ≥ 22 + npm；
+- 本仓库的桥、控制台和接入/回滚脚本。
+
+日常流程：
+
+1. 按原方式启动 DSH；
+2. 按原方式启动 Raft；
+3. 启动桥控制台：`node scripts/console-ctl.mjs start`，浏览器打开 `http://127.0.0.1:8970`；
+4. 首次接入某个 agent：先完全退出 Raft → 控制台点该 agent 的“接入 DSH” → 重新打开 Raft；
+5. 之后正常使用 Raft，控制台实时显示模型、推理深度、思考状态和 token 统计；
+6. 停止：先退出 Raft，再在控制台点“断开 DSH”恢复 `models-store.json`，最后 `node scripts/console-ctl.mjs stop`。
+
+说明：本仓库**不包含**和你电脑一一对应的 Raft/DSH 启动 bat；那些属于本地环境，按原方式操作即可。仓库只提供桥本身、控制台，以及修改/恢复 `models-store.json` 的脚本。
+
 桥在复制 `raft.ps1` 时会自动注入 `[Console]::InputEncoding = $utf8NoBom`，避免中文消息经 PowerShell 5.1 的 stdin 管道被按系统 ANSI/GBK 解码成乱码。
 
 ## 快速开始（命令行）

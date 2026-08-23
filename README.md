@@ -54,6 +54,26 @@ node scripts/console-ctl.mjs status
 node scripts/console-ctl.mjs restart
 ```
 
+## Required tools and daily workflow
+
+You need:
+
+- Raft (Slock): start/stop Raft and its builtin agents with your usual official client. Its launchers are intentionally not part of this repo.
+- DSH: your local DeepSeek Harness web with the `anchored-standard` preset, started the way you normally start it.
+- Node.js >= 22 with npm;
+- The bridge, console, and models-store scripts in this repo.
+
+Daily flow:
+
+1. Start DSH the usual way.
+2. Start Raft the usual way.
+3. Start the console: `node scripts/console-ctl.mjs start`, then open `http://127.0.0.1:8970`.
+4. First-time connect for an agent: fully quit Raft → click “Connect DSH” (“接入 DSH”) for that agent → reopen Raft.
+5. Use Raft normally; the console shows model, reasoning effort, live thinking, and token stats.
+6. To stop: quit Raft → click “Disconnect DSH” (“断开 DSH”) to restore `models-store.json` → `node scripts/console-ctl.mjs stop`.
+
+This repo intentionally does **not** include machine-specific batch files for starting Raft/DSH or opening the console; those belong to your local environment.
+
 The bridge also hardens the copied `raft.ps1` with
 `[Console]::InputEncoding = $utf8NoBom` so UTF-8 piped messages do not get
 decoded as the system ANSI code page on Chinese Windows.
