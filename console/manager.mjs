@@ -40,6 +40,7 @@ const builtinSettingsCache = new Map()
 let raftApiRefreshBackoffUntil = 0
 let raftApiRefreshBackoffToken = ''
 let raftProxyCache = { at: 0, map: {} }
+let raftProxyContextCache = { at: 0, value: null }
 
 const STATIC_PRESETS = [
   { id: 'standard', trust: 'system', name: 'Standard' },
@@ -473,25 +474,50 @@ function parseRaftWrapperEnv(file) {
   } catch { return null }
 }
 
-function raftProxyContext() {
+function raftProxyCandidates() {
+  const files = new Set()
   for (const agent of scanAgents()) {
     const stable = join(DATA_DIR, 'agents', agent.id, 'cli', 'raft.ps1')
-    let context = existsSync(stable) ? parseRaftWrapperEnv(stable) : null
-    if (!context) {
-      const root = join(SLOCK_ROOT, 'cli-transport', agent.id)
-      if (existsSync(root)) {
-        const dirs = readdirSync(root, { withFileTypes: true })
-          .filter((entry) => entry.isDirectory())
-          .map((entry) => join(root, entry.name))
-          .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
-        for (const dir of dirs) {
-          context = parseRaftWrapperEnv(join(dir, 'raft.ps1'))
-          if (context) break
-        }
-      }
+    if (existsSync(stable)) files.add(stable)
+    const root = join(SLOCK_ROOT, 'cli-transport', agent.id)
+    if (!existsSync(root)) continue
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const file = join(root, entry.name, 'raft.ps1')
+      if (existsSync(file)) files.add(file)
     }
-    if (context) return context
   }
+  return [...files].sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
+}
+
+function localPortOpen(urlText) {
+  return new Promise((resolve) => {
+    try {
+      const url = new URL(urlText)
+      const socket = createConnection({ host: url.hostname, port: Number(url.port || 80) })
+      socket.setTimeout(700)
+      socket.once('connect', () => { socket.destroy(); resolve(true) })
+      socket.once('timeout', () => { socket.destroy(); resolve(false) })
+      socket.once('error', () => resolve(false))
+    } catch { resolve(false) }
+  })
+}
+
+async function raftProxyContext() {
+  const now = Date.now()
+  if (now - raftProxyContextCache.at < 60000) return raftProxyContextCache.value
+  for (const file of raftProxyCandidates()) {
+    const context = parseRaftWrapperEnv(file)
+    if (!context) continue
+    if (!await localPortOpen(context.proxyUrl)) continue
+    const auth = { Authorization: `Bearer ${context.token}` }
+    const server = await fetchJsonWithTimeout(`${context.proxyUrl}/internal/agent-api/server`, auth, 2500)
+    if (server && Array.isArray(server.agents)) {
+      raftProxyContextCache = { at: now, value: context }
+      return context
+    }
+  }
+  raftProxyContextCache = { at: now, value: null }
   return null
 }
 
@@ -511,12 +537,15 @@ async function fetchJsonWithTimeout(url, headers, timeoutMs = 4000) {
 async function raftProfilesViaProxy() {
   const now = Date.now()
   if (now - raftProxyCache.at < 20000) return raftProxyCache.map
-  const context = raftProxyContext()
+  const context = await raftProxyContext()
   if (!context) return {}
   try {
     const auth = { Authorization: `Bearer ${context.token}` }
     const server = await fetchJsonWithTimeout(`${context.proxyUrl}/internal/agent-api/server`, auth)
-    if (!server || !Array.isArray(server.agents)) return {}
+    if (!server || !Array.isArray(server.agents)) {
+      raftProxyContextCache = { at: 0, value: null }
+      return {}
+    }
     const handles = [...new Set(server.agents.map((agent) => agent.name).filter(Boolean))]
     const map = {}
     await Promise.all(handles.map(async (handle) => {
@@ -536,6 +565,7 @@ async function raftProfilesViaProxy() {
     return map
   } catch {
     raftProxyCache = { at: now, map: {} }
+    raftProxyContextCache = { at: 0, value: null }
     return {}
   }
 }
