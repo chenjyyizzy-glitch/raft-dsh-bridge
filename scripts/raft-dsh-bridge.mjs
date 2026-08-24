@@ -711,6 +711,20 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  if (req.method === 'POST' && url.pathname === '/__bridge/cancel') {
+    const hadActive = activeTurn !== null
+    if (activeTurn) {
+      activeTurn.fail(new Error('cancelled from console'))
+      log('DSH turn cancelled from console')
+    }
+    if (dshSessionId) void dshRpc('session.cancel', { sessionId: dshSessionId }).catch(() => {})
+    turnState.phase = 'idle'
+    turnState.error = null
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ ok: true, cancelled: hadActive }))
+    return
+  }
+
   if (req.method === 'POST' && url.pathname === '/__bridge/reset') {
     dshSessionId = null
     lastInboxNotice = null

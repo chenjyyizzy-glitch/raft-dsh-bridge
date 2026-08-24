@@ -200,6 +200,14 @@ function agentCard(agent) {
   const actions = document.createElement('div')
   actions.className = 'actions'
   if (agent.connected) {
+    if (active || agent.bridge?.busy) {
+      const cancelBtn = document.createElement('button')
+      cancelBtn.className = 'danger'
+      cancelBtn.textContent = '停止思考'
+      cancelBtn.disabled = actionBusy
+      cancelBtn.onclick = () => agentAction(agent, 'cancel', cancelBtn)
+      actions.append(cancelBtn)
+    }
     const btn = document.createElement('button')
     btn.className = 'danger'
     btn.textContent = '断开 DSH'
@@ -350,7 +358,7 @@ async function agentAction(agent, action, btn) {
   const original = btn.textContent
   actionBusy = true
   btn.disabled = true
-  btn.textContent = action === 'connect' ? '接入中…' : '断开中…'
+  btn.textContent = action === 'connect' ? '接入中…' : action === 'disconnect' ? '断开中…' : '停止中…'
   try {
     const res = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/${action}`, { method: 'POST' })
     const j = await res.json().catch(() => ({}))

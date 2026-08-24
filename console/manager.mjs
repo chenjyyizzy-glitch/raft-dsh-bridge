@@ -1059,6 +1059,37 @@ async function autoConnectAllAgents() {
   }
 }
 
+async function dshRpcManager(method, payload) {
+  const response = await fetch(`${DSH_BASE}/api/${method}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload }),
+  })
+  if (!response.ok) throw new Error(`DSH ${method} HTTP ${response.status}`)
+  const envelope = await response.json().catch(() => null)
+  if (!envelope?.result?.ok) throw new Error(`DSH ${method} rejected`)
+  return envelope.result.value
+}
+
+async function cancelAgentTurn(agent) {
+  const cfg = config.agents[agent.id]
+  if (!cfg?.port) return { ok: false, error: 'agent is not connected' }
+  const identity = await bridgeIdentity(cfg.port)
+  if (!identity || identity.raftAgentId !== agent.id) return { ok: false, error: 'bridge identity mismatch' }
+  let cancelledByBridge = false
+  try {
+    const response = await fetch(`http://127.0.0.1:${cfg.port}/__bridge/cancel`, { method: 'POST' })
+    if (response.ok) {
+      const body = await response.json().catch(() => ({}))
+      cancelledByBridge = Boolean(body.ok)
+    }
+  } catch {}
+  if (!cancelledByBridge && identity.dshSessionId) {
+    await dshRpcManager('session.cancel', { sessionId: identity.dshSessionId })
+  }
+  return { ok: true, cancelled: true }
+}
+
 // ------------------------------------------------------------- HTTP app ---
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`)
@@ -1119,6 +1150,18 @@ const server = createServer(async (req, res) => {
   }
 
   const agentMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/([a-z-]+)$/)
+  if (agentMatch && req.method === 'POST' && agentMatch[2] === 'cancel') {
+    const agentId = decodeURIComponent(agentMatch[1])
+    const agent = scanAgents().find((item) => item.id === agentId)
+    if (!agent) return send(404, { error: 'agent not found' })
+    try {
+      send(200, await cancelAgentTurn(agent))
+    } catch (error) {
+      send(500, { error: error.message })
+    }
+    return
+  }
+
   if (agentMatch && req.method === 'PUT' && agentMatch[2] === 'policy') {
     const agentId = decodeURIComponent(agentMatch[1])
     const body = await readBody()
