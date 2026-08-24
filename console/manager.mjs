@@ -694,6 +694,7 @@ async function dshSessionStats(sessionId) {
 // One lightweight mux connection gives the console real-time turn state and a
 // short reasoning tail for every session, independently of bridge versions.
 let muxTurnStates = new Map()
+const cancelledSessions = new Set()
 let muxSocket = null
 let muxTimer = null
 
@@ -706,6 +707,7 @@ function emptyLiveTurn() {
 }
 
 function touchLiveTurn(sessionId, sessionEvent) {
+  if (cancelledSessions.has(sessionId)) return
   const type = sessionEvent?.type
   const data = sessionEvent?.data ?? {}
   let turn = muxTurnStates.get(sessionId) ?? emptyLiveTurn()
@@ -778,6 +780,18 @@ function connectLiveMux() {
 
 function liveTurnFor(sessionId) {
   const turn = muxTurnStates.get(sessionId)
+  if (cancelledSessions.has(sessionId)) {
+    return {
+      phase: 'idle', turn: turn?.turn ?? null, step: turn?.step ?? null,
+      startedAt: turn?.startedAt ?? null, endedAt: Date.now(), lastEventAt: Date.now(),
+      reasoningChars: turn?.reasoningChars ?? 0, textChars: turn?.textChars ?? 0,
+      toolCalls: turn?.toolCalls ?? 0, lastTool: turn?.lastTool ?? null,
+      firstReasoningAt: turn?.firstReasoningAt ?? null,
+      lastReasoningTail: turn?.lastReasoningTail ?? '', error: 'cancelled from console',
+      firstTokenMs: turn?.firstReasoningAt && turn?.startedAt ? turn.firstReasoningAt - turn.startedAt : null,
+      lastEventAgeMs: 0, stalled: false,
+    }
+  }
   if (!turn) return null
   return {
     ...turn,
@@ -1076,6 +1090,8 @@ async function cancelAgentTurn(agent) {
   if (!cfg?.port) return { ok: false, error: 'agent is not connected' }
   const identity = await bridgeIdentity(cfg.port)
   if (!identity || identity.raftAgentId !== agent.id) return { ok: false, error: 'bridge identity mismatch' }
+
+  // Soft stop first: bridge cancel (when available) + DSH session.cancel.
   let cancelledByBridge = false
   try {
     const response = await fetch(`http://127.0.0.1:${cfg.port}/__bridge/cancel`, { method: 'POST' })
@@ -1084,10 +1100,26 @@ async function cancelAgentTurn(agent) {
       cancelledByBridge = Boolean(body.ok)
     }
   } catch {}
-  if (!cancelledByBridge && identity.dshSessionId) {
-    await dshRpcManager('session.cancel', { sessionId: identity.dshSessionId })
+  if (identity.dshSessionId) {
+    cancelledSessions.add(identity.dshSessionId)
+    setTimeout(() => cancelledSessions.delete(identity.dshSessionId), 30 * 60_000)
+    await dshRpcManager('session.cancel', { sessionId: identity.dshSessionId }).catch(() => {})
   }
-  return { ok: true, cancelled: true }
+
+  await new Promise((resolve) => setTimeout(resolve, 1500))
+  const after = await bridgeIdentity(cfg.port)
+  const stillStuck = after?.busy === true || (after?.turnState?.phase && after.turnState.phase !== 'idle')
+  if (!stillStuck) return { ok: true, cancelled: true, softCancelled: true }
+
+  // DSH accepted the cancel but the turn is still stuck (for example a hung
+  // tool process). Force-restart only this agent's bridge process; the Raft
+  // HTTP stream is severed and the next Raft turn uses a fresh DSH session.
+  await stopBridge(agent.id)
+  const preset = cfg.preset ?? 'anchored-standard'
+  const stateFile = join(agentDataDir(agent.id), 'dsh-session.json')
+  writeFileSync(stateFile, JSON.stringify({ sessionId: null, preset, cwd: agent.dir }, null, 2))
+  const started = await ensureBridge(agent.id, agent.dir, cfg.port, preset)
+  return { ok: true, cancelled: true, forceRestarted: true, pid: started.pid }
 }
 
 // ------------------------------------------------------------- HTTP app ---
