@@ -1092,8 +1092,28 @@ async function connectAgent(agent) {
 let autoConnectBusy = false
 async function autoConnectAllAgents() {
   if (!config.autoConnectAll || autoConnectBusy) return
-  if (isRaftRunning()) return
   autoConnectBusy = true
+  if (isRaftRunning()) {
+    // Raft is running: only heal already-connected agents whose bridge
+    // process died. Do not touch models-store while Raft is running.
+    try {
+      for (const agent of scanAgents().filter((item) => item.builtin)) {
+        const cfg = config.agents[agent.id]
+        if (!cfg?.connected || cfg.autoConnect === false || !cfg.port) continue
+        const identity = await bridgeIdentity(cfg.port)
+        if (identity && identity.raftAgentId === agent.id) continue
+        try {
+          const started = await ensureBridge(agent.id, agent.dir, cfg.port, cfg.preset ?? 'anchored-standard')
+          log(`bridge healed while Raft running: ${agent.id} port=${cfg.port} pid=${started.pid}`)
+        } catch (error) {
+          log(`bridge heal failed for ${agent.id}: ${error.message}`)
+        }
+      }
+    } finally {
+      autoConnectBusy = false
+    }
+    return
+  }
   try {
     for (const agent of scanAgents().filter((item) => item.builtin)) {
       const cfg = config.agents[agent.id] ?? { autoConnect: true, connected: false, port: 0 }
