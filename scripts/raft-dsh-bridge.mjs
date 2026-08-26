@@ -182,6 +182,7 @@ function raftContextBlock() {
     `  & '${RAFT_WRAPPER}' message check`,
     `  & '${RAFT_WRAPPER}' message read <target>`,
     `  & '${RAFT_WRAPPER}' message send --target "<target>" "<text>"`,
+    'Raft message send encoding rule (Windows PowerShell 5.1): send text by calling the wrapper in the SAME PowerShell process, for example `[IO.File]::ReadAllText($path,[Text.Encoding]::UTF8) | & '<wrapper>' message send --target <target>`. Do not pipe Chinese text into a second powershell.exe process unless you first set `$OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)` in the current process; otherwise Chinese characters become ?.',
     'MEMORY.md is in the Raft workspace root; read and maintain it as the recovery point.',
     '',
   ].join('\n')

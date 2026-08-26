@@ -234,6 +234,15 @@ function agentCard(agent) {
     actions.append(note)
   }
 
+  if (agent.connected && agent.storeLinked === false) {
+    const warn = document.createElement('div')
+    warn.className = 'action-note'
+    warn.style.color = 'var(--bad)'
+    warn.style.marginTop = '6px'
+    warn.textContent = 'models-store 当前未指向桥（Raft 直连官方 API）；退出 Raft 后控制台会自动修复'
+    actions.append(warn)
+  }
+
   card.append(head, meta, think, stats, actions)
   return card
 }

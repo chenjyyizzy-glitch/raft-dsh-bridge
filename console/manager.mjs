@@ -443,6 +443,18 @@ function applyPolicyToStore(agent, port, policies) {
   writeJson(storePath, store)
 }
 
+function modelsStoreLinked(agent, port) {
+  const pro = modelsOfAgent(agent).find((model) => model.id === 'deepseek-v4-pro')
+  if (!pro) return true
+  return pro.baseUrl === `http://127.0.0.1:${port}`
+}
+
+function policiesForAgent(agent, port) {
+  return Object.fromEntries(
+    modelsOfAgent(agent).map((model) => [model.id, effectivePolicy(agent.id, model.id)]),
+  )
+}
+
 function restoreStore(agent) {
   const bak = backupPath(agent)
   if (existsSync(bak)) {
@@ -472,6 +484,33 @@ function parseRaftWrapperEnv(file) {
     if (!token) return null
     return { proxyUrl: proxyUrl.endsWith('/') ? proxyUrl.slice(0, -1) : proxyUrl, token }
   } catch { return null }
+}
+
+function hardenRaftWrapperFile(file) {
+  try {
+    if (!existsSync(file)) return false
+    const text = readFileSync(file, 'utf8')
+    if (text.includes('[Console]::InputEncoding')) return false
+    const marker = '[Console]::OutputEncoding = $utf8NoBom'
+    if (!text.includes(marker)) return false
+    writeFileSync(file, text.replace(marker, marker + '\n' + '[Console]::InputEncoding = $utf8NoBom'))
+    return true
+  } catch { return false }
+}
+
+function hardenRaftWrappers() {
+  let changed = 0
+  for (const agent of scanAgents()) {
+    const stable = join(DATA_DIR, 'agents', agent.id, 'cli', 'raft.ps1')
+    if (hardenRaftWrapperFile(stable)) changed++
+    const root = join(SLOCK_ROOT, 'cli-transport', agent.id)
+    if (!existsSync(root)) continue
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      if (hardenRaftWrapperFile(join(root, entry.name, 'raft.ps1'))) changed++
+    }
+  }
+  if (changed > 0) log('hardened raft wrappers: ' + changed)
 }
 
 function raftProxyCandidates() {
@@ -969,6 +1008,7 @@ async function buildState() {
       enabled: agentCfg.enabled ?? false,
       connected,
       autoConnect: agentCfg.autoConnect !== false,
+      storeLinked: port > 0 && connected ? modelsStoreLinked(agent, port) : true,
       pid: agentCfg.pid ?? null,
       backupExists: existsSync(backupPath(agent)),
       currentRuntime: info.runtime ?? null,
@@ -1060,7 +1100,13 @@ async function autoConnectAllAgents() {
       if (cfg.autoConnect === false) continue
       if (cfg.connected === true && cfg.port > 0) {
         const identity = await bridgeIdentity(cfg.port)
-        if (identity && identity.raftAgentId === agent.id) continue
+        if (identity && identity.raftAgentId === agent.id) {
+          if (!modelsStoreLinked(agent, cfg.port)) {
+            applyPolicyToStore(agent, cfg.port, policiesForAgent(agent, cfg.port))
+            log(`auto-connect repaired models-store for ${agent.id}`)
+          }
+          continue
+        }
       }
       const result = await connectAgent(agent)
       if (result.ok) log(`auto-connect ${agent.id}: port=${result.port} already=${Boolean(result.already)}`)
@@ -1245,6 +1291,8 @@ server.listen(PORT, HOST, () => {
   log(`raft-dsh-console listening on http://${HOST}:${PORT} (data=${DATA_DIR})`)
   console.log(`raft-dsh-console: http://${HOST}:${PORT}`)
   connectLiveMux()
+  hardenRaftWrappers()
+  setInterval(hardenRaftWrappers, 30000)
   void autoConnectAllAgents()
   setInterval(() => void autoConnectAllAgents(), 8000)
 })
